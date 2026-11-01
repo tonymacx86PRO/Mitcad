@@ -2,7 +2,9 @@
 # The Windows installer (docs/development.md "Windows installer") on a
 # GitHub-hosted Windows runner: the toolchain of tools/dev-env/setup-windows.ps1
 # with its pins (vcpkg, Qt, Rust), the render worker's libraries without
-# CUDA, then a release build and `--target package`. vcpkg's binary cache,
+# CUDA, then a release build and `--target package`. vcpkg builds release
+# libraries only (an overlay of the x64-windows triplet): the installer is
+# a release build, and debug ones would double the first run. Its binary cache,
 # Qt and the render worker's libraries are cached between runs; they are
 # saved also when the build fails, so a later run starts further on.
 name: Windows installer
@@ -14,6 +16,8 @@ on:
 
 env:
   MITCAD_RENDER_CUDA: '0'
+  MITCAD_RENDER_JOBS: '4'
+  VCPKG_OVERLAY_TRIPLETS: C:\dev\triplets
   VCPKG_ROOT: C:\dev\vcpkg
   VCPKG_DEFAULT_BINARY_CACHE: C:\dev\vcpkg-cache
   MITCAD_RENDER_DEPS: C:\dev\mitcad-render-deps
@@ -67,6 +71,13 @@ jobs:
           git clone --quiet https://github.com/microsoft/vcpkg $env:VCPKG_ROOT
           git -C $env:VCPKG_ROOT checkout --quiet $env:VCPKG_COMMIT
           & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
+          New-Item -ItemType Directory -Force $env:VCPKG_OVERLAY_TRIPLETS | Out-Null
+          @(
+            'set(VCPKG_TARGET_ARCHITECTURE x64)'
+            'set(VCPKG_CRT_LINKAGE dynamic)'
+            'set(VCPKG_LIBRARY_LINKAGE dynamic)'
+            'set(VCPKG_BUILD_TYPE release)'
+          ) | Set-Content -Encoding ascii "$env:VCPKG_OVERLAY_TRIPLETS\x64-windows.cmake"
 
       - name: Qt
         run: |
@@ -81,9 +92,20 @@ jobs:
         with:
           arch: x64
 
+      # The Visual Studio environment points VCPKG_ROOT at its own vcpkg.
+      - name: Pinned vcpkg
+        run: '"VCPKG_ROOT=C:\dev\vcpkg" | Out-File -Append $env:GITHUB_ENV'
+
       - name: The render worker's libraries (Cycles, Open Image Denoise)
-        timeout-minutes: 150
+        timeout-minutes: 300
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools\dev-env\build-cycles.ps1
+
+      - name: vcpkg's log
+        if: failure()
+        run: |
+          Get-Content C:\dev\mitcad-render-deps\vcpkg.log -Tail 60 -ErrorAction SilentlyContinue
+          Get-ChildItem C:\dev\vcpkg\buildtrees -Recurse -Filter '*-err.log' -ErrorAction SilentlyContinue |
+            ForEach-Object { "== $($_.FullName)"; Get-Content $_.FullName -Tail 30 }
 
       - name: Presets
         run: |
@@ -100,7 +122,7 @@ jobs:
           "@ | Set-Content -Encoding ascii CMakeUserPresets.json
 
       - name: Configure
-        timeout-minutes: 150
+        timeout-minutes: 60
         run: cmake --preset ci
 
       - name: Build the installer
