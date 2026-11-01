@@ -1,0 +1,127 @@
+# SPDX-License-Identifier: MIT
+# The Windows installer (docs/development.md "Windows installer") on a
+# GitHub-hosted Windows runner: the toolchain of tools/dev-env/setup-windows.ps1
+# with its pins (vcpkg, Qt, Rust), the render worker's libraries without
+# CUDA, then a release build and `--target package`. vcpkg's binary cache,
+# Qt and the render worker's libraries are cached between runs; they are
+# saved also when the build fails, so a later run starts further on.
+name: Windows installer
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+env:
+  MITCAD_RENDER_CUDA: '0'
+  VCPKG_ROOT: C:\dev\vcpkg
+  VCPKG_DEFAULT_BINARY_CACHE: C:\dev\vcpkg-cache
+  MITCAD_RENDER_DEPS: C:\dev\mitcad-render-deps
+  QT_VERSION: '6.12.0'
+  AQT_SPEC: aqtinstall @ git+https://github.com/miurahr/aqtinstall@076e1659807d0b362a3ed684d54c2e9c775eb9c7
+  VCPKG_COMMIT: 3aea538b2bb21a586502c67b00eb474fdd2e3098
+
+jobs:
+  installer:
+    runs-on: windows-2025
+    timeout-minutes: 355
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Disk space
+        run: Get-PSDrive -PSProvider FileSystem | Format-Table Name, Used, Free
+
+      - name: Restore caches
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            C:\dev\vcpkg-cache
+            C:\dev\Qt
+            C:\dev\mitcad-render-deps\install
+          key: windows-deps-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'third_party/vcpkg-ports/**', 'tools/dev-env/build-cycles.ps1', 'tools/dev-env/versions.sh') }}
+          restore-keys: |
+            windows-deps-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'third_party/vcpkg-ports/**', 'tools/dev-env/build-cycles.ps1', 'tools/dev-env/versions.sh') }}-
+            windows-deps-${{ env.VCPKG_COMMIT }}-
+
+      - name: Tools (Ninja, NSIS)
+        run: |
+          choco install ninja nsis -y --no-progress
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "C:\Program Files (x86)\NSIS" | Out-File -Append $env:GITHUB_PATH
+
+      - name: Rust (rust-toolchain.toml)
+        run: |
+          $file = Get-Content rust-toolchain.toml
+          $channel = ($file | Select-String '^channel *= *"(.*)"').Matches[0].Groups[1].Value
+          $components = ($file | Select-String '^components *= *\[(.*)\]').Matches[0].Groups[1].Value -replace '[" ]', ''
+          rustup toolchain install $channel --profile minimal --component $components --no-self-update
+          rustup default $channel
+
+      - name: vcpkg
+        run: |
+          New-Item -ItemType Directory -Force C:\dev, $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+          git clone --quiet https://github.com/microsoft/vcpkg $env:VCPKG_ROOT
+          git -C $env:VCPKG_ROOT checkout --quiet $env:VCPKG_COMMIT
+          & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
+
+      - name: Qt
+        run: |
+          if (-not (Test-Path "C:\dev\Qt\$env:QT_VERSION\msvc2022_64")) {
+            py -3 -m venv C:\dev\tools\aqt
+            C:\dev\tools\aqt\Scripts\pip.exe install --quiet "$env:AQT_SPEC"
+            C:\dev\tools\aqt\Scripts\aqt.exe install-qt windows desktop $env:QT_VERSION win64_msvc2022_64 -O C:\dev\Qt
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: The render worker's libraries (Cycles, Open Image Denoise)
+        timeout-minutes: 150
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools\dev-env\build-cycles.ps1
+
+      - name: Presets
+        run: |
+          $qt = "C:/dev/Qt/$env:QT_VERSION/msvc2022_64"
+          @"
+          {
+            "version": 6,
+            "configurePresets": [
+              { "name": "ci", "inherits": "windows-release",
+                "environment": { "VCPKG_ROOT": "C:/dev/vcpkg", "QT_ROOT_DIR": "$qt" } }
+            ],
+            "buildPresets": [{ "name": "ci", "configurePreset": "ci" }]
+          }
+          "@ | Set-Content -Encoding ascii CMakeUserPresets.json
+
+      - name: Configure
+        timeout-minutes: 150
+        run: cmake --preset ci
+
+      - name: Build the installer
+        timeout-minutes: 180
+        run: cmake --build --preset ci --target package
+
+      - name: Save caches
+        if: always() && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            C:\dev\vcpkg-cache
+            C:\dev\Qt
+            C:\dev\mitcad-render-deps\install
+          key: windows-deps-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'third_party/vcpkg-ports/**', 'tools/dev-env/build-cycles.ps1', 'tools/dev-env/versions.sh') }}-${{ github.run_id }}
+
+      - name: Upload the installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: mitcad-windows-installer
+          path: |
+            build/ci/mitcad-*-windows-x64.exe
+            build/ci/mitcad-*-windows-x64.zip
+          if-no-files-found: error
