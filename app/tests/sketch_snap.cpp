@@ -5,7 +5,8 @@
 // sketch's own geometry wins ties against them; those out of the plane
 // (mitcad#866) are read but never snapped to. The sketch's x and y axes
 // (mitcad#948) as curves to snap onto, and the coincident that holds a
-// point placed there on the axis's entity.
+// point placed there on the axis's entity. Alignment with the sketch's
+// points: a free position level or plumb with a point takes its y or x.
 #include "sketch/SketchSnap.hpp"
 
 #include <algorithm>
@@ -416,6 +417,58 @@ void axisSnapTests() {
   CHECK(model.pointAxes(QStringLiteral("p7")).isEmpty());
 }
 
+// Alignment with the sketch's points (Fusion's inference lines): a free
+// position within the curves' tolerance of the horizontal or vertical
+// through a point takes its y or x, the nearest such point's, both at the
+// crossing; only with the switch on, never over geometry, never with a
+// point the tool leaves out; the grid keeps the other coordinate.
+void alignTests() {
+  SketchModel model = axisSketch(); // p1 (20, 30), p3 (10, 0), p4 (30, 0)
+  SnapSettings settings;
+  settings.model = &model;
+  settings.toScreen = screenOf;
+  settings.grid = false;
+
+  // The switch off: free.
+  Snap s = snapAt(settings, V2{20.3, 60.0});
+  CHECK(s.kind == Snap::Kind::None && s.alignX.isEmpty() && sameAt(s.at, V2{20.3, 60.0}));
+  settings.align = true;
+  // 3 pixels right of the vertical through p1: its x.
+  s = snapAt(settings, V2{20.3, 60.0});
+  CHECK(s.kind == Snap::Kind::None && !s.onGeometry());
+  CHECK(s.alignX == QStringLiteral("p1") && s.alignY.isEmpty());
+  CHECK(sameAt(s.at, V2{20.0, 60.0}) && sameAt(s.alignXAt, V2{20.0, 30.0}));
+  CHECK(s.describe() == QStringLiteral("free, x of p1"));
+  // Level with p1, left of the y axis: its y.
+  s = snapAt(settings, V2{-50.0, 29.5});
+  CHECK(s.alignY == QStringLiteral("p1") && s.alignX.isEmpty() && sameAt(s.at, V2{-50.0, 30.0}));
+  // Plumb with p3 and level with p1: the crossing.
+  s = snapAt(settings, V2{10.4, 30.2});
+  CHECK(s.alignX == QStringLiteral("p3") && s.alignY == QStringLiteral("p1"));
+  CHECK(sameAt(s.at, V2{10.0, 30.0}));
+  CHECK(s.describe() == QStringLiteral("free, x of p3, y of p1"));
+  // The tolerance (6 pixels): 6.5 off.
+  CHECK(snapAt(settings, V2{20.65, 60.0}).alignX.isEmpty());
+  // The nearer of two verticals.
+  s = snapAt(settings, V2{29.6, 15.0});
+  CHECK(s.alignX == QStringLiteral("p4"));
+  // Over geometry the geometry's snap, unaligned.
+  s = snapAt(settings, V2{20.0, 30.3});
+  CHECK(s.kind == Snap::Kind::Point && s.alignX.isEmpty() && s.alignY.isEmpty());
+  // A point the tool leaves out.
+  settings.skipPoints.insert(QStringLiteral("p1"));
+  CHECK(snapAt(settings, V2{20.3, 60.0}).alignX.isEmpty());
+  settings.skipPoints.clear();
+  // With the grid: the aligned coordinate the point's, the other the grid's.
+  settings.grid = true;
+  settings.gridStep = 5.0;
+  model.points.front().at = V2{21.3, 30.0};
+  s = snapAt(settings, V2{21.6, 61.4});
+  CHECK(s.kind == Snap::Kind::Grid && s.alignX == QStringLiteral("p1"));
+  CHECK(sameAt(s.at, V2{21.3, 60.0}));
+  CHECK(s.describe() == QStringLiteral("grid, x of p1"));
+}
+
 } // namespace
 
 int sketchSnapTests() {
@@ -423,5 +476,6 @@ int sketchSnapTests() {
   bodyTargetTests();
   outOfPlaneTests();
   axisSnapTests();
+  alignTests();
   return failures;
 }

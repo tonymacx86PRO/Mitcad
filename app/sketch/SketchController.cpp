@@ -2177,6 +2177,7 @@ void SketchController::updateCursor(const QPointF& position) {
     settings.gridStep = m_gridStep > 0.0 ? m_gridStep : m_viewer.gridStep(); // the lines shown
     settings.body = m_tool->bodySnaps() ? &bodyGeometry() : nullptr;
     settings.axes = true; // mitcad#948
+    settings.align = true;
     m_snap = snap(settings, *raw, position);
   } else {
     m_snap = Snap();

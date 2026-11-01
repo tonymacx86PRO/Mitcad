@@ -53,6 +53,14 @@ struct Snap {
   QString axis;
   QPointF screen; // where the cursor was
   BodyItem bodyItem; // BodyVertex, BodyMidpoint: the vertex or the edge
+  // None, Grid: the points the position was aligned with, as Fusion's
+  // inference lines do it, shown as dashed guides: `alignX` gave it its x
+  // (a vertical guide from `alignXAt`), `alignY` its y (a horizontal one).
+  // Empty when not aligned; the alignment adds no constraint.
+  QString alignX;
+  QString alignY;
+  V2 alignXAt;
+  V2 alignYAt;
 
   // On existing geometry (a new point there gets a constraint).
   bool onGeometry() const { return kind != Kind::None && kind != Kind::Grid; }
@@ -76,6 +84,10 @@ struct SnapSettings {
   // (mitcad#948), with the curves' tolerance; the sketch's own geometry and
   // the origin win ties. On for every tool that snaps.
   bool axes = false;
+  // Alignment with the sketch's points: a position on no geometry within
+  // the curves' tolerance of the horizontal or vertical through a point
+  // takes that point's y or x (both at the crossing of two such lines).
+  bool align = false;
 };
 
 // The snapped position for the cursor at `screen`, where `raw` is the

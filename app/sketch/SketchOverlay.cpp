@@ -1432,7 +1432,21 @@ void SketchOverlay::paintPreview(QPainter& painter, const ToolPreview& preview) 
 
 void SketchOverlay::paintSnap(QPainter& painter) const {
   const Snap& snap = m_c.snapped();
-  if (!snap.onGeometry() || !m_c.cursorInView()) {
+  if (!m_c.cursorInView()) {
+    return;
+  }
+  // Dashed guides from the points the free position is aligned with.
+  if ((!snap.alignX.isEmpty() || !snap.alignY.isEmpty()) && m_c.tool() != nullptr) {
+    painter.setPen(QPen(kSnapColor, 1.0, Qt::DashLine));
+    const QPointF at = m_c.toScreen(snap.at);
+    if (!snap.alignX.isEmpty()) {
+      painter.drawLine(m_c.toScreen(snap.alignXAt), at);
+    }
+    if (!snap.alignY.isEmpty()) {
+      painter.drawLine(m_c.toScreen(snap.alignYAt), at);
+    }
+  }
+  if (!snap.onGeometry()) {
     return;
   }
   const QPointF c = m_c.toScreen(snap.at);

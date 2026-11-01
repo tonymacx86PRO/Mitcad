@@ -40,9 +40,16 @@ struct Candidate {
 QString Snap::describe() const {
   switch (kind) {
   case Kind::None:
-    return QStringLiteral("free");
-  case Kind::Grid:
-    return QStringLiteral("grid");
+  case Kind::Grid: {
+    QString text = kind == Kind::None ? QStringLiteral("free") : QStringLiteral("grid");
+    if (!alignX.isEmpty()) {
+      text += QStringLiteral(", x of %1").arg(alignX);
+    }
+    if (!alignY.isEmpty()) {
+      text += QStringLiteral(", y of %1").arg(alignY);
+    }
+    return text;
+  }
   case Kind::Point:
     return QStringLiteral("point %1").arg(point);
   case Kind::Center:
@@ -257,6 +264,35 @@ Snap snap(const SnapSettings& settings, const V2& raw, const QPointF& screen) {
       // No -0 in logs and commands.
       result.at.x += 0.0;
       result.at.y += 0.0;
+    }
+    if (settings.align) {
+      // The nearest horizontal and vertical through a point, measured on
+      // the screen at the cursor's foot on them.
+      double bestX = kCurvePixels;
+      double bestY = kCurvePixels;
+      for (const PointData& p : model.points) {
+        if (settings.skipPoints.contains(p.id) || !p.axis.isEmpty()) {
+          continue;
+        }
+        const double dx = screenDistance(toScreen(V2{p.at.x, raw.y}), screen);
+        if (dx <= bestX) {
+          bestX = dx - 1e-9; // the first of equal points wins
+          result.alignX = p.id;
+          result.alignXAt = p.at;
+        }
+        const double dy = screenDistance(toScreen(V2{raw.x, p.at.y}), screen);
+        if (dy <= bestY) {
+          bestY = dy - 1e-9;
+          result.alignY = p.id;
+          result.alignYAt = p.at;
+        }
+      }
+      if (!result.alignX.isEmpty()) {
+        result.at.x = result.alignXAt.x;
+      }
+      if (!result.alignY.isEmpty()) {
+        result.at.y = result.alignYAt.y;
+      }
     }
   }
   result.screen = screen;

@@ -1920,6 +1920,15 @@ already has a projection of the same corner or edge, MitCad uses that
 projection again. A click on a corner that already has a point does
 nothing.
 
+**Alignment guides:** when the pointer is on no geometry but level or
+plumb with a point of the sketch, every drawing tool takes that point's
+y or x, and a dashed line runs from the point to the pointer. Level
+with one point and plumb with another, it goes to where the two lines
+cross. Thus a new corner lines up with an existing one without a
+constraint. With the snap to grid option, the other coordinate keeps to
+the grid. The alignment adds no constraint: add Horizontal/Vertical to
+keep the points lined up when the design changes.
+
 **Auto constraint:** when the line, circle or arc tool has drawn its
 first entity, the palette shows an *Auto constraint* section. The
 section constrains each next entity of the same tool to a reference
